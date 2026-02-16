@@ -1,4 +1,4 @@
-package ddnstraefikplugin
+package ddns_traefik_plugin
 
 import (
 	"context"
@@ -49,7 +49,7 @@ func CreateConfig() *Config {
 	}
 }
 
-type Plugin struct {
+type Middleware struct {
 	next   http.Handler
 	name   string
 	logger *log.Logger
@@ -63,7 +63,8 @@ type Plugin struct {
 	stopChan chan struct{}
 }
 
-func New(_ context.Context, next http.Handler, cfg *Config, name string) (http.Handler, error) {
+func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http.Handler, error) {
+	_ = ctx
 	if next == nil {
 		return nil, errors.New("next handler cannot be nil")
 	}
@@ -101,7 +102,9 @@ func New(_ context.Context, next http.Handler, cfg *Config, name string) (http.H
 		Timeout: time.Duration(effectiveCfg.RequestTimeoutSeconds) * time.Second,
 	}
 
-	p := &Plugin{
+	log.Printf("DDNS plugin initialized: %s", name)
+
+	p := &Middleware{
 		next:     next,
 		name:     name,
 		logger:   logger,
@@ -122,7 +125,7 @@ func New(_ context.Context, next http.Handler, cfg *Config, name string) (http.H
 	return p, nil
 }
 
-func (p *Plugin) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+func (p *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if p.cfg.Enabled && p.cfg.AutoDiscoverHost {
 		host := normalizeHost(req.Host)
 		if isLiteralHost(host) {
@@ -134,7 +137,7 @@ func (p *Plugin) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	p.next.ServeHTTP(rw, req)
 }
 
-func (p *Plugin) syncLoop() {
+func (p *Middleware) syncLoop() {
 	ticker := time.NewTicker(time.Duration(p.cfg.SyncIntervalSeconds) * time.Second)
 	defer ticker.Stop()
 
@@ -154,7 +157,7 @@ func (p *Plugin) syncLoop() {
 	}
 }
 
-func (p *Plugin) syncOnce(ctx context.Context) {
+func (p *Middleware) syncOnce(ctx context.Context) {
 	if !p.cfg.Enabled {
 		return
 	}
@@ -187,7 +190,7 @@ func (p *Plugin) syncOnce(ctx context.Context) {
 	}
 }
 
-func (p *Plugin) syncDomain(ctx context.Context, zone *cfZone, domain, publicIP string) error {
+func (p *Middleware) syncDomain(ctx context.Context, zone *cfZone, domain, publicIP string) error {
 	records, err := p.client.listARecords(ctx, zone.ID, domain)
 	if err != nil {
 		return err
@@ -208,7 +211,7 @@ func (p *Plugin) syncDomain(ctx context.Context, zone *cfZone, domain, publicIP 
 	return err
 }
 
-func (p *Plugin) snapshotDomains() []string {
+func (p *Middleware) snapshotDomains() []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	out := make([]string, 0, len(p.hosts))

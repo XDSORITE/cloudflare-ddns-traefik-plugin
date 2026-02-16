@@ -1,4 +1,4 @@
-package ddnstraefikplugin
+package ddns_traefik_plugin
 
 import (
 	"net/http"
@@ -46,9 +46,9 @@ func TestServeHTTPTracksLiteralHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
-	p, ok := handler.(*Plugin)
+	p, ok := handler.(*Middleware)
 	if !ok {
-		t.Fatalf("handler is not *Plugin")
+		t.Fatalf("handler is not *Middleware")
 	}
 
 	rec := httptest.NewRecorder()
@@ -61,4 +61,3 @@ func TestServeHTTPTracksLiteralHost(t *testing.T) {
 		t.Fatalf("unexpected hosts snapshot: %+v", hosts)
 	}
 }
-

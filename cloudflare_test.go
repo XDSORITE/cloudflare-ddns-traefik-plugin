@@ -1,4 +1,4 @@
-package ddnstraefikplugin
+package ddns_traefik_plugin
 
 import (
 	"context"
@@ -61,4 +61,3 @@ func TestListARecordsFiltersExactName(t *testing.T) {
 		t.Fatalf("unexpected records: %+v", records)
 	}
 }
-

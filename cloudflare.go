@@ -1,4 +1,4 @@
-package ddnstraefikplugin
+package ddns_traefik_plugin
 
 import (
 	"bytes"
@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
-	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -34,11 +34,11 @@ func newCloudflareClient(apiToken string, httpClient *http.Client, logger interf
 	}
 }
 
-type cfEnvelope[T any] struct {
-	Success    bool     `json:"success"`
-	Errors     []cfErr  `json:"errors"`
-	Result     T        `json:"result"`
-	ResultInfo *cfPager `json:"result_info,omitempty"`
+type cfEnvelope struct {
+	Success    bool            `json:"success"`
+	Errors     []cfErr         `json:"errors"`
+	Result     json.RawMessage `json:"result"`
+	ResultInfo *cfPager        `json:"result_info,omitempty"`
 }
 
 type cfErr struct {
@@ -71,12 +71,15 @@ func (c *cloudflareClient) listZones(ctx context.Context) ([]cfZone, error) {
 	page := 1
 	for {
 		path := fmt.Sprintf("/zones?page=%d&per_page=50", page)
-		var env cfEnvelope[[]cfZone]
-		err := c.doRequest(ctx, http.MethodGet, path, nil, &env)
+		env, err := c.doRequest(ctx, http.MethodGet, path, nil)
 		if err != nil {
 			return nil, err
 		}
-		zones = append(zones, env.Result...)
+		var pageZones []cfZone
+		if err := json.Unmarshal(env.Result, &pageZones); err != nil {
+			return nil, fmt.Errorf("invalid zones payload: %w", err)
+		}
+		zones = append(zones, pageZones...)
 		if env.ResultInfo == nil || env.ResultInfo.TotalPages <= page {
 			break
 		}
@@ -88,26 +91,31 @@ func (c *cloudflareClient) listZones(ctx context.Context) ([]cfZone, error) {
 func (c *cloudflareClient) listARecords(ctx context.Context, zoneID, host string) ([]cfRecord, error) {
 	escapedHost := url.QueryEscape(host)
 	path := fmt.Sprintf("/zones/%s/dns_records?type=A&name=%s&per_page=100", zoneID, escapedHost)
-	var env cfEnvelope[[]cfRecord]
-	err := c.doRequest(ctx, http.MethodGet, path, nil, &env)
+	env, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	filtered := make([]cfRecord, 0, len(env.Result))
-	for _, r := range env.Result {
+	var records []cfRecord
+	if err := json.Unmarshal(env.Result, &records); err != nil {
+		return nil, fmt.Errorf("invalid dns records payload: %w", err)
+	}
+
+	filtered := make([]cfRecord, 0, len(records))
+	for _, r := range records {
 		if strings.EqualFold(r.Name, host) && r.Type == "A" {
 			filtered = append(filtered, r)
 		}
 	}
-	slices.SortFunc(filtered, func(a, b cfRecord) int {
-		return strings.Compare(a.ID, b.ID)
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].ID < filtered[j].ID
 	})
 	return filtered, nil
 }
 
 func (c *cloudflareClient) createARecord(ctx context.Context, zoneID, host, ip string, proxied bool, comment string) (*cfRecord, error) {
-	payload := map[string]any{
+	payload := map[string]interface{}{
 		"type":    "A",
 		"name":    host,
 		"content": ip,
@@ -116,16 +124,19 @@ func (c *cloudflareClient) createARecord(ctx context.Context, zoneID, host, ip s
 		"comment": comment,
 	}
 	path := fmt.Sprintf("/zones/%s/dns_records", zoneID)
-	var env cfEnvelope[cfRecord]
-	err := c.doRequest(ctx, http.MethodPost, path, payload, &env)
+	env, err := c.doRequest(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return nil, err
 	}
-	return &env.Result, nil
+	var record cfRecord
+	if err := json.Unmarshal(env.Result, &record); err != nil {
+		return nil, fmt.Errorf("invalid create record payload: %w", err)
+	}
+	return &record, nil
 }
 
 func (c *cloudflareClient) updateARecord(ctx context.Context, zoneID, recordID, host, ip string, proxied bool, comment string) (*cfRecord, error) {
-	payload := map[string]any{
+	payload := map[string]interface{}{
 		"type":    "A",
 		"name":    host,
 		"content": ip,
@@ -134,33 +145,37 @@ func (c *cloudflareClient) updateARecord(ctx context.Context, zoneID, recordID, 
 		"comment": comment,
 	}
 	path := fmt.Sprintf("/zones/%s/dns_records/%s", zoneID, recordID)
-	var env cfEnvelope[cfRecord]
-	err := c.doRequest(ctx, http.MethodPut, path, payload, &env)
+	env, err := c.doRequest(ctx, http.MethodPut, path, payload)
 	if err != nil {
 		return nil, err
 	}
-	return &env.Result, nil
+	var record cfRecord
+	if err := json.Unmarshal(env.Result, &record); err != nil {
+		return nil, fmt.Errorf("invalid update record payload: %w", err)
+	}
+	return &record, nil
 }
 
-func (c *cloudflareClient) doRequest(ctx context.Context, method, path string, payload any, out any) error {
+func (c *cloudflareClient) doRequest(ctx context.Context, method, path string, payload interface{}) (*cfEnvelope, error) {
 	var body []byte
 	var err error
 	if payload != nil {
 		body, err = json.Marshal(payload)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
+		var parsed *cfEnvelope
 		var reqBody io.Reader
 		if body != nil {
 			reqBody = bytes.NewReader(body)
 		}
 		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+c.apiToken)
 		req.Header.Set("Content-Type", "application/json")
@@ -185,74 +200,63 @@ func (c *cloudflareClient) doRequest(ctx context.Context, method, path string, p
 					return
 				}
 
-				if err := json.Unmarshal(raw, out); err != nil {
+				var env cfEnvelope
+				if err := json.Unmarshal(raw, &env); err != nil {
 					lastErr = fmt.Errorf("invalid cloudflare response: %w", err)
 					return
 				}
-				switch parsed := out.(type) {
-				case *cfEnvelope[[]cfZone]:
-					if !parsed.Success {
-						lastErr = fmt.Errorf("cloudflare API error: %+v", parsed.Errors)
-						return
-					}
-				case *cfEnvelope[[]cfRecord]:
-					if !parsed.Success {
-						lastErr = fmt.Errorf("cloudflare API error: %+v", parsed.Errors)
-						return
-					}
-				case *cfEnvelope[cfRecord]:
-					if !parsed.Success {
-						lastErr = fmt.Errorf("cloudflare API error: %+v", parsed.Errors)
-						return
-					}
-				default:
-					lastErr = fmt.Errorf("unsupported response envelope type %T", out)
+				if !env.Success {
+					lastErr = fmt.Errorf("cloudflare API error: %+v", env.Errors)
 					return
 				}
 				lastErr = nil
+				parsed = &env
 			}()
 		}
 
 		if lastErr == nil {
-			return nil
+			return parsed, nil
 		}
 		if attempt < 3 {
 			time.Sleep(time.Duration(attempt) * time.Second)
 		}
 	}
-	return fmt.Errorf("cloudflare request failed: %w", lastErr)
+	return nil, fmt.Errorf("cloudflare request failed: %w", lastErr)
 }
 
 func resolvePublicIPv4(ctx context.Context, sources []string, client *http.Client) (string, error) {
-	var errors []string
+	var errs []string
 	for _, source := range sources {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("%s: %v", source, err))
+			errs = append(errs, fmt.Sprintf("%s: %v", source, err))
 			continue
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("%s: %v", source, err))
+			errs = append(errs, fmt.Sprintf("%s: %v", source, err))
 			continue
 		}
+
 		raw, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
-			errors = append(errors, fmt.Sprintf("%s: %v", source, readErr))
+			errs = append(errs, fmt.Sprintf("%s: %v", source, readErr))
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			errors = append(errors, fmt.Sprintf("%s: status=%d", source, resp.StatusCode))
+			errs = append(errs, fmt.Sprintf("%s: status=%d", source, resp.StatusCode))
 			continue
 		}
+
 		candidate := strings.TrimSpace(string(raw))
-		if ip, err := netip.ParseAddr(candidate); err == nil && ip.Is4() {
+		parsed := net.ParseIP(candidate)
+		if parsed != nil && parsed.To4() != nil {
 			return candidate, nil
 		}
-		errors = append(errors, fmt.Sprintf("%s: invalid ip %q", source, candidate))
+		errs = append(errs, fmt.Sprintf("%s: invalid ip %q", source, candidate))
 	}
-	return "", fmt.Errorf("all IP sources failed: %s", strings.Join(errors, "; "))
+	return "", fmt.Errorf("all IP sources failed: %s", strings.Join(errs, "; "))
 }
 
 func bestZoneForDomain(domain string, zones []cfZone) *cfZone {
