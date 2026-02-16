@@ -1,0 +1,2 @@
+[console_scripts]
+ddns-traefik-sync = app.main:main

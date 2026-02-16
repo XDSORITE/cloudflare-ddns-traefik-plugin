@@ -1,0 +1,198 @@
+http:
+  middlewares:
+    corsMiddleware:
+      headers:
+        accessControlAllowCredentials: true
+        accessControlAllowHeaders:
+          - Authorization
+          - Content-Type
+          - Referer
+          - User-Agent
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        accessControlAllowOriginList:
+          - "https://*.technebula.top"
+
+    forwardClientInfo:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-For: "{client.ip}"
+          X-Forwarded-Host: "{host}"
+          X-Real-IP: "{client.ip}"
+
+    forward_and_cors:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-For: "{client.ip}"
+          X-Forwarded-Host: "{host}"
+          X-Real-IP: "{client.ip}"
+        accessControlAllowCredentials: true
+        accessControlAllowHeaders:
+          - Authorization
+          - Content-Type
+          - Referer
+          - User-Agent
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        accessControlAllowOriginList:
+          - "https://*.technebula.top"
+
+  routers:
+    metube-7001:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: metube-7001
+      rule: Host(`metube.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+    jellyfin-7002:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: jellyfin-7002
+      rule: Host(`movie.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+    radarr-7102:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: radarr-7102
+      rule: Host(`radarr.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+    sonarr-7202:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: sonarr-7202
+      rule: Host(`sonarr.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+    prowlarr-7302:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: prowlarr-7302
+      rule: Host(`prowlarr.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+    qbittorrent-7402:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: qbittorrent-7402
+      rule: Host(`torrent.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+    nextcloud-7003:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: nextcloud-7003
+      rule: Host(`cloud.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+    openwebui-7004:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: openwebui-7004
+      rule: Host(`openwebui.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+    ollama-7104:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: ollama-7104
+      rule: Host(`ollama.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+    immich-7005:
+      entryPoints: [websecure]
+      middlewares: [corsMiddleware, forwardClientInfo]
+      service: immich-7005
+      rule: Host(`photos.technebula.top`)
+      tls:
+        options: default
+        certResolver: mydnsresolver
+
+  services:
+    metube-7001:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7001"
+        passHostHeader: true
+
+    jellyfin-7002:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7002"
+        passHostHeader: true
+
+    radarr-7102:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7102"
+        passHostHeader: true
+
+    sonarr-7202:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7202"
+        passHostHeader: true
+
+    prowlarr-7302:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7302"
+        passHostHeader: true
+
+    qbittorrent-7402:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7402"
+        passHostHeader: true
+
+    nextcloud-7003:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7003"
+        passHostHeader: true
+
+    openwebui-7004:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7004"
+        passHostHeader: true
+
+    ollama-7104:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7104"
+        passHostHeader: true
+
+    immich-7005:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:7005"
+        passHostHeader: true

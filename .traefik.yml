@@ -1,0 +1,17 @@
+displayName: DDNS Cloudflare Sync
+type: middleware
+import: github.com/xdsorite/ddns-traefik-plugin
+summary: Sync the request host DNS A record in Cloudflare to the current public IP.
+testData:
+  enabled: true
+  apiTokenEnv: CLOUDFLARE_API_TOKEN
+  syncIntervalSeconds: 300
+  requestTimeoutSeconds: 10
+  defaultProxied: false
+  autoDiscoverHost: true
+  domains: []
+  ipSources:
+    - https://api.ipify.org
+    - https://ifconfig.me/ip
+    - https://checkip.amazonaws.com
+  managedComment: managed-by=traefik-plugin-ddns

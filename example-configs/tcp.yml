@@ -1,0 +1,30 @@
+tcp:
+  routers:
+    nextcloud-7003:
+      entryPoints: [websecure]
+      service: nextcloud-7003
+      rule: HostSNI(`cloud.technebula.top`)
+      tls:
+        passthrough: false
+        options: default
+        certResolver: mydnsresolver
+
+    immich-7005:
+      entryPoints: [websecure]
+      service: immich-7005
+      rule: HostSNI(`photos.technebula.top`)
+      tls:
+        passthrough: false
+        options: default
+        certResolver: mydnsresolver
+
+  services:
+    nextcloud-7003:
+      loadBalancer:
+        servers:
+          - address: "172.17.0.1:7003"
+
+    immich-7005:
+      loadBalancer:
+        servers:
+          - address: "172.17.0.1:7005"

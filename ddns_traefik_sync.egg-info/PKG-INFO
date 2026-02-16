@@ -1,0 +1,72 @@
+Metadata-Version: 2.4
+Name: ddns-traefik-sync
+Version: 0.1.0
+Summary: Sync Cloudflare A records to domains discovered from Traefik dynamic config files.
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: PyYAML>=6.0.1
+Requires-Dist: requests>=2.32.3
+
+# ddns-traefik-sync
+
+Dockerized Python service that discovers domains from Traefik dynamic config files and syncs Cloudflare A records to the current public IPv4.
+
+## Features
+
+- Reads one Traefik config file or recursively scans a folder for `.yml`/`.yaml`.
+- Extracts literal domains from `Host(...)` and `HostSNI(...)` rules.
+- Uses multiple public IP providers with fallback.
+- Creates missing Cloudflare A records and updates mismatched IPs.
+- Preserves existing `proxied` values on updates.
+- Marks managed records with comment `managed-by=ddns-traefik-sync`.
+- Optional stale cleanup mode (`--cleanup-stale`) for managed records no longer discovered.
+- Daemon mode by default (5-minute interval) with one-shot and dry-run modes.
+
+## Configuration
+
+Environment variables:
+
+- `CLOUDFLARE_API_TOKEN` (required)
+- `TRAEFIK_SOURCE` (required if `--source` is not passed)
+- `SYNC_INTERVAL_SECONDS` (default: `300`)
+- `IP_SOURCES` (optional CSV override)
+- `DEFAULT_PROXIED` (default: `false`, used only for newly created records)
+- `LOG_LEVEL` (default: `INFO`)
+- `REQUEST_TIMEOUT_SECONDS` (default: `10`)
+
+CLI options:
+
+```bash
+ddns-traefik-sync --source /configs/http.yml
+ddns-traefik-sync --source /configs --interval 300
+ddns-traefik-sync --source /configs --once
+ddns-traefik-sync --source /configs --dry-run
+ddns-traefik-sync --source /configs --cleanup-stale
+```
+
+## Local run
+
+```bash
+python -m venv .venv
+. .venv/Scripts/activate  # Windows PowerShell: .\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
+pip install -e .
+ddns-traefik-sync --source ./example-configs --once --dry-run
+```
+
+## Docker run
+
+```bash
+docker build -t ddns-traefik-sync .
+docker run --rm \
+  -e CLOUDFLARE_API_TOKEN=YOUR_TOKEN \
+  -e TRAEFIK_SOURCE=/configs \
+  -v C:/path/to/traefik-configs:/configs:ro \
+  ddns-traefik-sync --once
+```
+
+## Notes
+
+- Only literal hosts are managed. Wildcards and `HostRegexp(...)` are skipped with warnings.
+- If no domains are found in a cycle, no DNS mutations are performed.
+- Transient Cloudflare failures are retried with backoff per request.
