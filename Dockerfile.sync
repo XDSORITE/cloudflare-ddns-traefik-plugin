@@ -1,0 +1,13 @@
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+COPY go.mod ./
+RUN go mod download
+COPY cmd ./cmd
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/ddns-traefik-sync ./cmd/ddns-traefik-sync
+
+FROM alpine:3.20
+RUN adduser -D -H -u 10001 appuser
+USER appuser
+WORKDIR /app
+COPY --from=builder /out/ddns-traefik-sync /usr/local/bin/ddns-traefik-sync
+ENTRYPOINT ["/usr/local/bin/ddns-traefik-sync"]

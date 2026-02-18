@@ -1,0 +1,17 @@
+services:
+  ddns-traefik-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile.sync
+    container_name: ddns-traefik-sync
+    restart: unless-stopped
+    environment:
+      CF_API_TOKEN: "YOUR_CLOUDFLARE_API_TOKEN"
+      CF_ZONE: "example.com"
+      TRAEFIK_SOURCE: "/configs"
+      SYNC_INTERVAL_SECONDS: "300"
+      REQUEST_TIMEOUT_SECONDS: "10"
+      DEFAULT_PROXIED: "false"
+      IP_SOURCES: "https://api.ipify.org,https://ifconfig.me/ip,https://checkip.amazonaws.com"
+    volumes:
+      - ./traefik-dynamic-configs:/configs:ro

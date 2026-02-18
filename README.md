@@ -1,23 +1,21 @@
 # Cloudflare DDNS Traefik Plugin
 
-Traefik middleware plugin that keeps Cloudflare **A** records in sync with your server public IPv4.
+## Quick answer: what is `.traefik.yml`?
+It is the Traefik plugin manifest.  
+Traefik uses it to identify the plugin (`displayName`, `type`, `import`) and validate basic test data.
 
-## How it works
-- One global worker runs every 5 minutes (`syncIntervalSeconds: 300` by default).
-- Middleware is passive and does not block traffic.
-- Worker compares current public IP to Cloudflare A records and updates only when needed.
-- Existing Cloudflare proxy mode (`proxied`) is preserved on updates.
+## Support
+- Router type support: **HTTP routers only**
+- Tested with: **Traefik v3**
 
-## 1. Put plugin in a simple local path
+## Mode 1: Traefik plugin mode
 
-Place this repo root directly here:
+### 1) Put plugin source in Traefik local plugin folder
+Use:
 
 `<traefik-root>/plugins-local/src/ddns-traefik-plugin`
 
-No deep nested folders needed.
-
-## 2. Enable plugin in Traefik static config
-
+### 2) Enable plugin in static `traefik.yml`
 ```yaml
 experimental:
   localPlugins:
@@ -25,10 +23,7 @@ experimental:
       moduleName: ddns-traefik-plugin
 ```
 
-## 3. Configure middleware in Traefik dynamic config
-
-All plugin configuration is in Traefik config (no external env/config files needed):
-
+### 3) Configure middleware in dynamic config
 ```yaml
 http:
   middlewares:
@@ -52,38 +47,45 @@ http:
             - "https://checkip.amazonaws.com"
 ```
 
-## 4. Attach middleware to router
+## Mode 2: Docker container mode
+Use this if you want a standalone sync container that reads Traefik config files.
 
+### Key behavior
+- Reads config files only
+- **Does not modify mounted files**
+- Intended mount mode: **read-only**
+- Safe to restart repeatedly (`restart: unless-stopped`, stateless start)
+- Fast startup: performs first sync immediately, then interval loop
+
+### Run with Docker Compose
+Use `docker-compose.sync.yml`:
 ```yaml
-http:
-  routers:
-    app:
-      rule: Host(`app.example.com`)
-      middlewares:
-        - ddns-sync
-      service: app-svc
+services:
+  ddns-traefik-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile.sync
+    restart: unless-stopped
+    environment:
+      CF_API_TOKEN: "YOUR_CLOUDFLARE_API_TOKEN"
+      CF_ZONE: "example.com"
+      TRAEFIK_SOURCE: "/configs"
+      SYNC_INTERVAL_SECONDS: "300"
+      REQUEST_TIMEOUT_SECONDS: "10"
+      DEFAULT_PROXIED: "false"
+      IP_SOURCES: "https://api.ipify.org,https://ifconfig.me/ip,https://checkip.amazonaws.com"
+    volumes:
+      - ./traefik-dynamic-configs:/configs:ro
 ```
 
-## Config fields
-- `enabled`: enable/disable this middleware registration.
-- `apiToken`: Cloudflare API token (required).
-- `zone`: optional zone restriction.
-- `syncIntervalSeconds`: sync interval (default `300`).
-- `requestTimeoutSeconds`: request timeout in seconds (default `10`).
-- `autoDiscoverHost`: extract hosts from `routerRule`.
-- `routerRule`: router rule string (for example `Host(\`app.example.com\`)`).
-- `domains`: explicit domains to manage.
-- `domainsCsv`: comma-separated manual domains.
-- `defaultProxied`: used only when creating new records.
-- `ipSources`: public IP endpoints in priority order.
+Container mode parses `http.routers.*.rule` with `Host(...)` from mounted `.yml/.yaml` files.
 
 ## Cloudflare token permissions
 - `Zone:Read`
 - `DNS:Read`
 - `DNS:Edit`
 
-## Test
-
+## Local test
 ```bash
 go test ./...
 ```
