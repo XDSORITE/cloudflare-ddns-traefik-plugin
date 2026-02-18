@@ -19,7 +19,6 @@ Use this mode if you want a standalone DDNS container (no Traefik plugin loading
 ```text
 project/
   docker-compose.sync.yml
-  traefik.yml
   traefik-dynamic-configs/
     http.yml
     other.yml
@@ -39,11 +38,21 @@ services:
       SYNC_INTERVAL_SECONDS: "300"
       REQUEST_TIMEOUT_SECONDS: "10"
       DEFAULT_PROXIED: "false"
+      MANAGED_COMMENT: "managed-by=ddns-traefik-sync"
       IP_SOURCES: "https://api.ipify.org,https://ifconfig.me/ip,https://checkip.amazonaws.com"
     volumes:
-      - ./traefik.yml:/traefik/traefik.yml:ro
       - ./traefik-dynamic-configs:/configs:ro
 ```
+
+## Environment variables
+- `CF_API_TOKEN` (required): Cloudflare API token.
+- `CF_ZONE` (optional): restrict updates to one zone (example: `example.com`).
+- `TRAEFIK_SOURCE` (optional): path inside container to parse; default `/configs`.
+- `SYNC_INTERVAL_SECONDS` (optional): sync frequency in seconds; default `300`.
+- `REQUEST_TIMEOUT_SECONDS` (optional): HTTP timeout in seconds; default `10`.
+- `DEFAULT_PROXIED` (optional): used only when creating a new A record; default `false`.
+- `MANAGED_COMMENT` (optional): comment on created records; default `managed-by=ddns-traefik-sync`.
+- `IP_SOURCES` (optional): comma-separated public IP endpoints in priority order.
 
 ## Run with compose
 1. Set real values in `docker-compose.sync.yml`:
@@ -63,20 +72,13 @@ docker compose -f docker-compose.sync.yml down
 ```
 
 ## Read-only mount requirement
-Keep mounts read-only:
+Mount only your Traefik config files as read-only:
 ```yaml
 volumes:
-  - ./traefik.yml:/traefik/traefik.yml:ro
   - ./traefik-dynamic-configs:/configs:ro
 ```
 
-If you want to parse a single Traefik file directly, set `TRAEFIK_SOURCE` to that file path:
-```yaml
-environment:
-  TRAEFIK_SOURCE: "/traefik/traefik.yml"
-```
-
-Default recommended setup:
+Default recommended setup in compose:
 ```yaml
 environment:
   TRAEFIK_SOURCE: "/configs"
