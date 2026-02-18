@@ -52,6 +52,5 @@ The container does not edit mounted files.
 ## Pull prebuilt image
 ```bash
 docker pull ghcr.io/xdsorite/cloudflare-ddns-traefik-plugin:latest
-docker pull ghcr.io/xdsorite/cloudflare-ddns-traefik-plugin:v1.1
+docker pull ghcr.io/xdsorite/cloudflare-ddns-traefik-plugin:main
 ```
-
