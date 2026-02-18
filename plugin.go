@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -14,7 +13,8 @@ import (
 	"time"
 )
 
-var literalHostPattern = regexp.MustCompile(`(?i)^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
+var hostCallPattern = regexp.MustCompile(`Host\(([^)]*)\)`)
+var backtickPattern = regexp.MustCompile("`([^`]+)`")
 
 var defaultIPSources = []string{
 	"https://api.ipify.org",
@@ -22,45 +22,53 @@ var defaultIPSources = []string{
 	"https://checkip.amazonaws.com",
 }
 
+var (
+	globalRunner     *Runner
+	globalRunnerOnce sync.Once
+	globalRunnerErr  error
+)
+
 type Config struct {
 	Enabled               bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 	APIToken              string   `json:"apiToken,omitempty" yaml:"apiToken,omitempty"`
-	APITokenEnv           string   `json:"apiTokenEnv,omitempty" yaml:"apiTokenEnv,omitempty"`
+	Zone                  string   `json:"zone,omitempty" yaml:"zone,omitempty"`
 	SyncIntervalSeconds   int      `json:"syncIntervalSeconds,omitempty" yaml:"syncIntervalSeconds,omitempty"`
 	RequestTimeoutSeconds int      `json:"requestTimeoutSeconds,omitempty" yaml:"requestTimeoutSeconds,omitempty"`
-	DefaultProxied        bool     `json:"defaultProxied,omitempty" yaml:"defaultProxied,omitempty"`
 	AutoDiscoverHost      bool     `json:"autoDiscoverHost,omitempty" yaml:"autoDiscoverHost,omitempty"`
+	RouterRule            string   `json:"routerRule,omitempty" yaml:"routerRule,omitempty"`
 	Domains               []string `json:"domains,omitempty" yaml:"domains,omitempty"`
+	DefaultProxied        bool     `json:"defaultProxied,omitempty" yaml:"defaultProxied,omitempty"`
 	IPSources             []string `json:"ipSources,omitempty" yaml:"ipSources,omitempty"`
 	ManagedComment        string   `json:"managedComment,omitempty" yaml:"managedComment,omitempty"`
+}
+
+type Middleware struct {
+	next http.Handler
+	name string
+}
+
+type Runner struct {
+	logger *log.Logger
+	cfg    Config
+	client *cloudflareClient
+
+	hostsMu sync.RWMutex
+	hosts   map[string]struct{}
+
+	syncMu      sync.Mutex
+	lastKnownIP string
 }
 
 func CreateConfig() *Config {
 	return &Config{
 		Enabled:               true,
-		APITokenEnv:           "CLOUDFLARE_API_TOKEN",
 		SyncIntervalSeconds:   300,
 		RequestTimeoutSeconds: 10,
-		DefaultProxied:        false,
 		AutoDiscoverHost:      true,
-		Domains:               nil,
+		DefaultProxied:        false,
 		IPSources:             append([]string(nil), defaultIPSources...),
 		ManagedComment:        "managed-by=traefik-plugin-ddns",
 	}
-}
-
-type Middleware struct {
-	next   http.Handler
-	name   string
-	logger *log.Logger
-
-	cfg    Config
-	client *cloudflareClient
-
-	mu    sync.RWMutex
-	hosts map[string]struct{}
-
-	stopChan chan struct{}
 }
 
 func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http.Handler, error) {
@@ -72,179 +80,222 @@ func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http
 		return nil, errors.New("config cannot be nil")
 	}
 
-	effectiveCfg := *cfg
-	if effectiveCfg.SyncIntervalSeconds <= 0 {
-		effectiveCfg.SyncIntervalSeconds = 300
-	}
-	if effectiveCfg.RequestTimeoutSeconds <= 0 {
-		effectiveCfg.RequestTimeoutSeconds = 10
-	}
-	if len(effectiveCfg.IPSources) == 0 {
-		effectiveCfg.IPSources = append([]string(nil), defaultIPSources...)
-	}
-	if effectiveCfg.ManagedComment == "" {
-		effectiveCfg.ManagedComment = "managed-by=traefik-plugin-ddns"
-	}
-	if effectiveCfg.APITokenEnv == "" {
-		effectiveCfg.APITokenEnv = "CLOUDFLARE_API_TOKEN"
-	}
+	effective := normalizeConfig(*cfg)
 
-	token := strings.TrimSpace(effectiveCfg.APIToken)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv(effectiveCfg.APITokenEnv))
-	}
-	if token == "" {
-		return nil, fmt.Errorf("cloudflare token missing: set apiToken or env %s", effectiveCfg.APITokenEnv)
-	}
-
-	logger := log.New(os.Stdout, "ddns-traefik-plugin: ", log.LstdFlags)
-	httpClient := &http.Client{
-		Timeout: time.Duration(effectiveCfg.RequestTimeoutSeconds) * time.Second,
-	}
-
-	log.Printf("DDNS plugin initialized: %s", name)
-
-	p := &Middleware{
-		next:     next,
-		name:     name,
-		logger:   logger,
-		cfg:      effectiveCfg,
-		client:   newCloudflareClient(token, httpClient, logger),
-		hosts:    make(map[string]struct{}),
-		stopChan: make(chan struct{}),
-	}
-
-	for _, d := range effectiveCfg.Domains {
-		domain := normalizeHost(d)
-		if isLiteralHost(domain) {
-			p.hosts[domain] = struct{}{}
+	globalRunnerOnce.Do(func() {
+		globalRunner, globalRunnerErr = newRunner(effective)
+		if globalRunnerErr != nil {
+			return
 		}
+		go globalRunner.Start()
+	})
+	if globalRunnerErr != nil {
+		return nil, globalRunnerErr
+	}
+	if globalRunner == nil {
+		return nil, errors.New("global runner initialization failed")
 	}
 
-	go p.syncLoop()
-	return p, nil
+	// Register hosts for this middleware instance into the global worker.
+	if effective.Enabled {
+		globalRunner.RegisterConfig(name, effective)
+	}
+
+	return &Middleware{next: next, name: name}, nil
 }
 
-func (p *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	if p.cfg.Enabled && p.cfg.AutoDiscoverHost {
-		host := normalizeHost(req.Host)
-		if isLiteralHost(host) {
-			p.mu.Lock()
-			p.hosts[host] = struct{}{}
-			p.mu.Unlock()
-		}
-	}
-	p.next.ServeHTTP(rw, req)
+func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	m.next.ServeHTTP(rw, req)
 }
 
-func (p *Middleware) syncLoop() {
-	ticker := time.NewTicker(time.Duration(p.cfg.SyncIntervalSeconds) * time.Second)
+func newRunner(cfg Config) (*Runner, error) {
+	token := strings.TrimSpace(cfg.APIToken)
+	if token == "" {
+		return nil, fmt.Errorf("cloudflare token missing: set apiToken in middleware config")
+	}
+
+	logger := log.New(os.Stdout, "ddns-traefik-plugin ", log.LstdFlags)
+	httpClient := &http.Client{Timeout: time.Duration(cfg.RequestTimeoutSeconds) * time.Second}
+
+	r := &Runner{
+		logger: logger,
+		cfg:    cfg,
+		client: newCloudflareClient(token, httpClient, logger),
+		hosts:  make(map[string]struct{}),
+	}
+	r.infof("worker started")
+	return r, nil
+}
+
+func (r *Runner) RegisterConfig(name string, cfg Config) {
+	// Keep auth/network config from first initialized middleware only.
+	if cfg.Zone != "" && !strings.EqualFold(strings.TrimSpace(cfg.Zone), strings.TrimSpace(r.cfg.Zone)) && r.cfg.Zone != "" {
+		r.warnf("middleware=%s zone %q ignored; global zone is %q", name, cfg.Zone, r.cfg.Zone)
+	}
+
+	for _, domain := range cfg.Domains {
+		r.addHost(normalizeHost(domain))
+	}
+	if cfg.AutoDiscoverHost && cfg.RouterRule != "" {
+		for _, host := range extractHosts(cfg.RouterRule) {
+			r.addHost(host)
+		}
+	}
+}
+
+func (r *Runner) addHost(host string) {
+	host = normalizeHost(host)
+	if host == "" {
+		return
+	}
+	r.hostsMu.Lock()
+	r.hosts[host] = struct{}{}
+	r.hostsMu.Unlock()
+}
+
+func (r *Runner) snapshotHosts() []string {
+	r.hostsMu.RLock()
+	defer r.hostsMu.RUnlock()
+	out := make([]string, 0, len(r.hosts))
+	for host := range r.hosts {
+		out = append(out, host)
+	}
+	return out
+}
+
+func (r *Runner) Start() {
+	ticker := time.NewTicker(time.Duration(r.cfg.SyncIntervalSeconds) * time.Second)
 	defer ticker.Stop()
 
-	// Prime quickly after first requests arrive.
-	initialTimer := time.NewTimer(15 * time.Second)
-	defer initialTimer.Stop()
+	r.runSyncCycle(context.Background())
 
-	for {
-		select {
-		case <-p.stopChan:
-			return
-		case <-initialTimer.C:
-			p.syncOnce(context.Background())
-		case <-ticker.C:
-			p.syncOnce(context.Background())
-		}
+	for range ticker.C {
+		r.runSyncCycle(context.Background())
 	}
 }
 
-func (p *Middleware) syncOnce(ctx context.Context) {
-	if !p.cfg.Enabled {
+func (r *Runner) runSyncCycle(ctx context.Context) {
+	if !r.cfg.Enabled {
 		return
 	}
-	domains := p.snapshotDomains()
-	if len(domains) == 0 {
-		return
-	}
-	p.logger.Printf("sync cycle started: domains=%d", len(domains))
 
-	publicIP, err := resolvePublicIPv4(ctx, p.cfg.IPSources, p.client.httpClient)
+	r.syncMu.Lock()
+	defer r.syncMu.Unlock()
+
+	hosts := r.snapshotHosts()
+	if len(hosts) == 0 {
+		r.debugf("no hosts registered for sync")
+		return
+	}
+
+	publicIP, err := resolvePublicIPv4(ctx, r.cfg.IPSources, r.client.httpClient)
 	if err != nil {
-		p.logger.Printf("ip resolution failed: %v", err)
+		r.errorf("ip resolution failed: %v", err)
 		return
 	}
-	p.logger.Printf("resolved public IP: %s", publicIP)
 
-	zones, err := p.client.listZones(ctx)
+	zones, err := r.client.listZones(ctx)
 	if err != nil {
-		p.logger.Printf("failed listing zones: %v", err)
+		r.errorf("failed listing zones: %v", err)
 		return
 	}
 
-	for _, domain := range domains {
-		zone := bestZoneForDomain(domain, zones)
+	if r.lastKnownIP != "" && r.lastKnownIP == publicIP {
+		r.debugf("public ip unchanged (%s), still validating records", publicIP)
+	}
+
+	for _, domain := range hosts {
+		zone := r.resolveZone(domain, zones)
 		if zone == nil {
-			p.logger.Printf("skip domain=%s no matching cloudflare zone", domain)
+			r.warnf("domain=%s skipped (no matching zone)", domain)
 			continue
 		}
-		if err := p.syncDomain(ctx, zone, domain, publicIP); err != nil {
-			p.logger.Printf("sync failed domain=%s: %v", domain, err)
+		if err := r.syncDomain(ctx, zone, domain, publicIP); err != nil {
+			r.errorf("domain=%s sync failed: %v", domain, err)
 		}
 	}
+	r.lastKnownIP = publicIP
 }
 
-func (p *Middleware) syncDomain(ctx context.Context, zone *cfZone, domain, publicIP string) error {
-	records, err := p.client.listARecords(ctx, zone.ID, domain)
-	if err != nil {
-		return err
+func (r *Runner) resolveZone(domain string, zones []cfZone) *cfZone {
+	if r.cfg.Zone == "" {
+		return bestZoneForDomain(domain, zones)
 	}
-	if len(records) == 0 {
-		p.logger.Printf("create domain=%s ip=%s", domain, publicIP)
-		_, err := p.client.createARecord(ctx, zone.ID, domain, publicIP, p.cfg.DefaultProxied, p.cfg.ManagedComment)
+	for i := range zones {
+		zoneName := strings.ToLower(strings.TrimSpace(zones[i].Name))
+		target := strings.ToLower(strings.TrimSpace(r.cfg.Zone))
+		if zoneName == target && (domain == zoneName || strings.HasSuffix(domain, "."+zoneName)) {
+			return &zones[i]
+		}
+	}
+	return nil
+}
+
+func (r *Runner) syncDomain(ctx context.Context, zone *cfZone, domain, publicIP string) error {
+	records, err := r.client.listARecords(ctx, zone.ID, domain)
+	if err != nil {
 		return err
 	}
 
 	if hasDesiredARecord(records, domain, publicIP) {
-		p.logger.Printf("record already in sync domain=%s ip=%s", domain, publicIP)
+		r.debugf("domain=%s already synced", domain)
 		return nil
 	}
 
+	if len(records) == 0 {
+		r.infof("create A record domain=%s ip=%s", domain, publicIP)
+		_, err := r.client.createARecord(ctx, zone.ID, domain, publicIP, r.cfg.DefaultProxied, r.cfg.ManagedComment)
+		return err
+	}
+
 	record := pickRecord(records)
-	p.logger.Printf("update domain=%s old=%s new=%s", domain, record.Content, publicIP)
-	_, err = p.client.updateARecord(ctx, zone.ID, record.ID, domain, publicIP, record.Proxied, record.Comment)
+	r.infof("update A record domain=%s old=%s new=%s", domain, record.Content, publicIP)
+	_, err = r.client.updateARecord(ctx, zone.ID, record.ID, domain, publicIP, record.Proxied, record.Comment)
 	return err
 }
 
-func (p *Middleware) snapshotDomains() []string {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	out := make([]string, 0, len(p.hosts))
-	for host := range p.hosts {
+func extractHosts(rule string) []string {
+	rule = strings.TrimSpace(rule)
+	if rule == "" {
+		return nil
+	}
+
+	callMatches := hostCallPattern.FindAllStringSubmatch(rule, -1)
+	outSet := make(map[string]struct{})
+	for _, call := range callMatches {
+		if len(call) < 2 {
+			continue
+		}
+		for _, token := range backtickPattern.FindAllStringSubmatch(call[1], -1) {
+			if len(token) < 2 {
+				continue
+			}
+			host := normalizeHost(token[1])
+			if host == "" {
+				continue
+			}
+			outSet[host] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(outSet))
+	for host := range outSet {
 		out = append(out, host)
 	}
 	return out
 }
 
 func normalizeHost(host string) string {
-	h := strings.ToLower(strings.TrimSpace(host))
-	if strings.HasPrefix(h, "[") {
-		return strings.Trim(h, "[]")
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.Trim(host, "`")
+	host = strings.Trim(host, " ")
+	if parts := strings.Split(host, ":"); len(parts) == 2 {
+		host = parts[0]
 	}
-	if strings.Count(h, ":") == 1 {
-		if splitHost, _, err := net.SplitHostPort(h); err == nil {
-			return strings.Trim(splitHost, "[]")
-		}
+	if strings.Contains(host, "*") {
+		return ""
 	}
-	return strings.Trim(h, "[]")
-}
-
-func isLiteralHost(host string) bool {
-	if host == "" || strings.Contains(host, "*") {
-		return false
-	}
-	if len(host) > 253 {
-		return false
-	}
-	return literalHostPattern.MatchString(host)
+	return strings.Trim(host, "[]")
 }
 
 func hasDesiredARecord(records []cfRecord, domain, publicIP string) bool {
@@ -260,4 +311,36 @@ func hasDesiredARecord(records []cfRecord, domain, publicIP string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeConfig(cfg Config) Config {
+	if cfg.SyncIntervalSeconds <= 0 {
+		cfg.SyncIntervalSeconds = 300
+	}
+	if cfg.RequestTimeoutSeconds <= 0 {
+		cfg.RequestTimeoutSeconds = 10
+	}
+	if len(cfg.IPSources) == 0 {
+		cfg.IPSources = append([]string(nil), defaultIPSources...)
+	}
+	if cfg.ManagedComment == "" {
+		cfg.ManagedComment = "managed-by=traefik-plugin-ddns"
+	}
+	return cfg
+}
+
+func (r *Runner) debugf(format string, args ...interface{}) {
+	r.logger.Printf("[DEBUG] "+format, args...)
+}
+
+func (r *Runner) infof(format string, args ...interface{}) {
+	r.logger.Printf("[INFO] "+format, args...)
+}
+
+func (r *Runner) warnf(format string, args ...interface{}) {
+	r.logger.Printf("[WARN] "+format, args...)
+}
+
+func (r *Runner) errorf(format string, args ...interface{}) {
+	r.logger.Printf("[ERROR] "+format, args...)
 }

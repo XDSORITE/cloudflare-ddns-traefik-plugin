@@ -3,62 +3,92 @@ package ddns_traefik_plugin
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"sync"
 	"testing"
 )
 
+func resetGlobalRunner() {
+	globalRunner = nil
+	globalRunnerErr = nil
+	globalRunnerOnce = sync.Once{}
+}
+
 func TestCreateConfigDefaults(t *testing.T) {
 	cfg := CreateConfig()
+	if cfg.Enabled != true {
+		t.Fatalf("expected enabled=true by default")
+	}
 	if cfg.SyncIntervalSeconds != 300 {
 		t.Fatalf("expected default sync interval 300, got %d", cfg.SyncIntervalSeconds)
 	}
 	if cfg.RequestTimeoutSeconds != 10 {
 		t.Fatalf("expected default timeout 10, got %d", cfg.RequestTimeoutSeconds)
 	}
-	if cfg.APITokenEnv != "CLOUDFLARE_API_TOKEN" {
-		t.Fatalf("unexpected token env default: %s", cfg.APITokenEnv)
+}
+
+func TestExtractHosts(t *testing.T) {
+	hosts := extractHosts("Host(`app.example.com`,`api.example.com`) && PathPrefix(`/`)")
+	if len(hosts) != 2 {
+		t.Fatalf("expected 2 hosts, got %d", len(hosts))
 	}
 }
 
-func TestNormalizeHost(t *testing.T) {
-	tests := map[string]string{
-		"App.Example.com:443": "app.example.com",
-		"simple.example.com":  "simple.example.com",
-	}
-	for input, expected := range tests {
-		got := normalizeHost(input)
-		if got != expected {
-			t.Fatalf("normalizeHost(%q)=%q want %q", input, got, expected)
-		}
-	}
-}
-
-func TestServeHTTPTracksLiteralHost(t *testing.T) {
-	_ = os.Setenv("CLOUDFLARE_API_TOKEN", "test-token")
-	defer os.Unsetenv("CLOUDFLARE_API_TOKEN")
-
+func TestServeHTTPIsPassive(t *testing.T) {
+	resetGlobalRunner()
 	cfg := CreateConfig()
-	cfg.SyncIntervalSeconds = 3600
+	cfg.APIToken = "test-token"
+	cfg.Enabled = false
+
+	nextCalled := false
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		nextCalled = true
 		rw.WriteHeader(http.StatusNoContent)
 	})
+
 	handler, err := New(nil, next, cfg, "test")
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
-	p, ok := handler.(*Middleware)
+	m, ok := handler.(*Middleware)
 	if !ok {
 		t.Fatalf("handler is not *Middleware")
 	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://example.org", nil)
-	req.Host = "movie.technebula.top:443"
-	p.ServeHTTP(rec, req)
+	m.ServeHTTP(rec, req)
 
-	hosts := p.snapshotDomains()
-	if len(hosts) != 1 || hosts[0] != "movie.technebula.top" {
-		t.Fatalf("unexpected hosts snapshot: %+v", hosts)
+	if !nextCalled {
+		t.Fatalf("expected next handler to be called")
+	}
+}
+
+func TestGlobalRunnerInitializedOnlyOnce(t *testing.T) {
+	resetGlobalRunner()
+
+	cfg := CreateConfig()
+	cfg.APIToken = "token-a"
+	cfg.Enabled = false
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
+
+	_, err := New(nil, next, cfg, "a")
+	if err != nil {
+		t.Fatalf("first New failed: %v", err)
+	}
+	first := globalRunner
+	if first == nil {
+		t.Fatalf("globalRunner should be initialized")
+	}
+
+	cfg2 := CreateConfig()
+	cfg2.APIToken = "token-b"
+	cfg2.Enabled = false
+	_, err = New(nil, next, cfg2, "b")
+	if err != nil {
+		t.Fatalf("second New failed: %v", err)
+	}
+	if globalRunner != first {
+		t.Fatalf("expected singleton runner instance")
 	}
 }
 

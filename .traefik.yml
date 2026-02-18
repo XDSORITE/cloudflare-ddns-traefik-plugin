@@ -3,11 +3,12 @@ type: middleware
 
 import: github.com/xdsorite/ddns-traefik-plugin
 
-summary: Automatically updates Cloudflare DNS records based on Traefik router Host rules
+summary: Automatically sync DNS records with Cloudflare
 
 testData:
   enabled: true
-  apiTokenEnv: CLOUDFLARE_API_TOKEN
+  zone: example.com
+  apiToken: CHANGE_ME
   syncIntervalSeconds: 300
   requestTimeoutSeconds: 10
   autoDiscoverHost: true

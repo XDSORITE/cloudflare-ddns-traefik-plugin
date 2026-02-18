@@ -15,7 +15,7 @@ http:
           - DELETE
           - OPTIONS
         accessControlAllowOriginList:
-          - "https://*.technebula.top"
+          - "https://*.example.com"
 
     forwardClientInfo:
       headers:
@@ -43,14 +43,14 @@ http:
           - DELETE
           - OPTIONS
         accessControlAllowOriginList:
-          - "https://*.technebula.top"
+          - "https://*.example.com"
 
   routers:
     metube-7001:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: metube-7001
-      rule: Host(`metube.technebula.top`)
+      rule: Host(`metube.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver
@@ -59,7 +59,7 @@ http:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: jellyfin-7002
-      rule: Host(`movie.technebula.top`)
+      rule: Host(`movie.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver
@@ -68,7 +68,7 @@ http:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: radarr-7102
-      rule: Host(`radarr.technebula.top`)
+      rule: Host(`radarr.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver
@@ -77,7 +77,7 @@ http:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: sonarr-7202
-      rule: Host(`sonarr.technebula.top`)
+      rule: Host(`sonarr.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver
@@ -86,7 +86,7 @@ http:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: prowlarr-7302
-      rule: Host(`prowlarr.technebula.top`)
+      rule: Host(`prowlarr.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver
@@ -95,7 +95,7 @@ http:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: qbittorrent-7402
-      rule: Host(`torrent.technebula.top`)
+      rule: Host(`torrent.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver
@@ -104,7 +104,7 @@ http:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: nextcloud-7003
-      rule: Host(`cloud.technebula.top`)
+      rule: Host(`cloud.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver
@@ -113,7 +113,7 @@ http:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: openwebui-7004
-      rule: Host(`openwebui.technebula.top`)
+      rule: Host(`openwebui.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver
@@ -122,7 +122,7 @@ http:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: ollama-7104
-      rule: Host(`ollama.technebula.top`)
+      rule: Host(`ollama.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver
@@ -131,7 +131,7 @@ http:
       entryPoints: [websecure]
       middlewares: [corsMiddleware, forwardClientInfo]
       service: immich-7005
-      rule: Host(`photos.technebula.top`)
+      rule: Host(`photos.example.com`)
       tls:
         options: default
         certResolver: mydnsresolver

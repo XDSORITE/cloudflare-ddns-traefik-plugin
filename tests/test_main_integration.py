@@ -7,14 +7,14 @@ from app.main import run_sync_cycle
 class FakeCloudflare:
     def __init__(self) -> None:
         self.synced = False
-        self._zones = [{"id": "z1", "name": "technebula.top"}]
+        self._zones = [{"id": "z1", "name": "example.com"}]
         self._records = {}
 
     def list_zones(self):
         return self._zones
 
     def find_best_zone_match(self, domain, zones):
-        return type("Match", (), {"zone_id": "z1", "zone_name": "technebula.top"})()
+        return type("Match", (), {"zone_id": "z1", "zone_name": "example.com"})()
 
     def list_a_records(self, zone_id, name=None):
         if name:
@@ -42,7 +42,7 @@ def test_run_sync_cycle_end_to_end(monkeypatch, tmp_path: Path) -> None:
 http:
   routers:
     metube:
-      rule: Host(`metube.technebula.top`)
+      rule: Host(`metube.example.com`)
 """,
         encoding="utf-8",
     )

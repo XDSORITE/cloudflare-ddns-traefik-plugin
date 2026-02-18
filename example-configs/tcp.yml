@@ -3,7 +3,7 @@ tcp:
     nextcloud-7003:
       entryPoints: [websecure]
       service: nextcloud-7003
-      rule: HostSNI(`cloud.technebula.top`)
+      rule: HostSNI(`cloud.example.com`)
       tls:
         passthrough: false
         options: default
@@ -12,7 +12,7 @@ tcp:
     immich-7005:
       entryPoints: [websecure]
       service: immich-7005
-      rule: HostSNI(`photos.technebula.top`)
+      rule: HostSNI(`photos.example.com`)
       tls:
         passthrough: false
         options: default
