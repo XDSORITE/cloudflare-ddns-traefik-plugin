@@ -2,6 +2,8 @@
 
 Use this mode when you want Traefik to run DDNS as a middleware plugin.
 
+Supported scope: HTTP routers with `Host(...)` rules.
+
 ## Why `.traefik.yml` is needed
 Traefik reads `.traefik.yml` as plugin metadata (name/type/import/test data).  
 Without it, plugin mode will not load.
@@ -54,6 +56,10 @@ http:
       service: app-svc
 ```
 
+## 5) Restart Traefik and check logs
+- Restart Traefik after config changes.
+- Confirm plugin loads and sync cycles appear in logs.
+
 ## Troubleshooting
 - Plugin not loading:
   - confirm `moduleName: ddns-traefik-plugin`
@@ -64,4 +70,3 @@ http:
 - No hosts parsed:
   - this project reads HTTP `Host(...)` rules only
   - confirm your rule contains literal hosts
-

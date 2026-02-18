@@ -58,15 +58,19 @@ services:
 1. Set real values in `docker-compose.sync.yml`:
    - `CF_API_TOKEN`
    - optional `CF_ZONE`
-2. Start:
+2. Pull latest image:
 ```bash
-docker compose -f docker-compose.sync.yml up -d --build
+docker compose -f docker-compose.sync.yml pull
 ```
-3. Logs:
+3. Start:
+```bash
+docker compose -f docker-compose.sync.yml up -d
+```
+4. Logs:
 ```bash
 docker compose -f docker-compose.sync.yml logs -f ddns-traefik-sync
 ```
-4. Stop:
+5. Stop:
 ```bash
 docker compose -f docker-compose.sync.yml down
 ```

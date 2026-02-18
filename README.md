@@ -16,6 +16,14 @@ Sync Cloudflare DNS A records from Traefik HTTP router hosts.
 - `ghcr.io/xdsorite/cloudflare-ddns-traefik-plugin:latest`
 - `ghcr.io/xdsorite/cloudflare-ddns-traefik-plugin:main`
 
+## Quick start
+- Plugin mode: follow `docs/plugin-mode.md`
+- Docker mode:
+```bash
+docker compose -f docker-compose.sync.yml pull
+docker compose -f docker-compose.sync.yml up -d
+```
+
 ## Build/test
 ```bash
 go test ./...
