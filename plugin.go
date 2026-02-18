@@ -13,6 +13,7 @@ import (
 	"time"
 )
 
+// Host(...) parser used to extract static domains from router rules.
 var hostCallPattern = regexp.MustCompile(`Host\(([^)]*)\)`)
 var backtickPattern = regexp.MustCompile("`([^`]+)`")
 
@@ -28,18 +29,33 @@ var (
 	globalRunnerErr  error
 )
 
+// Config contains all plugin settings.
+// Keep all user configuration inside Traefik dynamic middleware config.
 type Config struct {
-	Enabled               bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
-	APIToken              string   `json:"apiToken,omitempty" yaml:"apiToken,omitempty"`
-	Zone                  string   `json:"zone,omitempty" yaml:"zone,omitempty"`
-	SyncIntervalSeconds   int      `json:"syncIntervalSeconds,omitempty" yaml:"syncIntervalSeconds,omitempty"`
-	RequestTimeoutSeconds int      `json:"requestTimeoutSeconds,omitempty" yaml:"requestTimeoutSeconds,omitempty"`
-	AutoDiscoverHost      bool     `json:"autoDiscoverHost,omitempty" yaml:"autoDiscoverHost,omitempty"`
-	RouterRule            string   `json:"routerRule,omitempty" yaml:"routerRule,omitempty"`
-	Domains               []string `json:"domains,omitempty" yaml:"domains,omitempty"`
-	DefaultProxied        bool     `json:"defaultProxied,omitempty" yaml:"defaultProxied,omitempty"`
-	IPSources             []string `json:"ipSources,omitempty" yaml:"ipSources,omitempty"`
-	ManagedComment        string   `json:"managedComment,omitempty" yaml:"managedComment,omitempty"`
+	// Enabled controls whether this middleware instance registers domains with the global worker.
+	Enabled bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	// APIToken is the Cloudflare API token (required).
+	APIToken string `json:"apiToken,omitempty" yaml:"apiToken,omitempty"`
+	// Zone optionally restricts management to one Cloudflare zone (example: example.com).
+	Zone string `json:"zone,omitempty" yaml:"zone,omitempty"`
+	// SyncIntervalSeconds defines how often DNS checks run. Default: 300.
+	SyncIntervalSeconds int `json:"syncIntervalSeconds,omitempty" yaml:"syncIntervalSeconds,omitempty"`
+	// RequestTimeoutSeconds is the timeout for HTTP calls to IP providers and Cloudflare. Default: 10.
+	RequestTimeoutSeconds int `json:"requestTimeoutSeconds,omitempty" yaml:"requestTimeoutSeconds,omitempty"`
+	// AutoDiscoverHost enables host extraction from RouterRule.
+	AutoDiscoverHost bool `json:"autoDiscoverHost,omitempty" yaml:"autoDiscoverHost,omitempty"`
+	// RouterRule is a Traefik router rule string (for example Host(`app.example.com`)).
+	RouterRule string `json:"routerRule,omitempty" yaml:"routerRule,omitempty"`
+	// Domains is a manual list of FQDNs to always manage.
+	Domains []string `json:"domains,omitempty" yaml:"domains,omitempty"`
+	// DomainsCSV is an alternative manual input for domains: comma-separated values.
+	DomainsCSV string `json:"domainsCsv,omitempty" yaml:"domainsCsv,omitempty"`
+	// DefaultProxied is applied only when creating new A records.
+	DefaultProxied bool `json:"defaultProxied,omitempty" yaml:"defaultProxied,omitempty"`
+	// IPSources is the ordered list of public IP endpoints.
+	IPSources []string `json:"ipSources,omitempty" yaml:"ipSources,omitempty"`
+	// ManagedComment is added to newly created records.
+	ManagedComment string `json:"managedComment,omitempty" yaml:"managedComment,omitempty"`
 }
 
 type Middleware struct {
@@ -47,6 +63,7 @@ type Middleware struct {
 	name string
 }
 
+// Runner is the singleton background worker shared by all middleware instances.
 type Runner struct {
 	logger *log.Logger
 	cfg    Config
@@ -71,6 +88,7 @@ func CreateConfig() *Config {
 	}
 }
 
+// New creates one middleware instance and ensures exactly one global runner exists.
 func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http.Handler, error) {
 	_ = ctx
 	if next == nil {
@@ -104,6 +122,7 @@ func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http
 	return &Middleware{next: next, name: name}, nil
 }
 
+// ServeHTTP is intentionally passive: request flow is never blocked by DDNS work.
 func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	m.next.ServeHTTP(rw, req)
 }
@@ -325,6 +344,15 @@ func normalizeConfig(cfg Config) Config {
 	}
 	if cfg.ManagedComment == "" {
 		cfg.ManagedComment = "managed-by=traefik-plugin-ddns"
+	}
+	// Support manual domain configuration via CSV in addition to list form.
+	if cfg.DomainsCSV != "" {
+		for _, entry := range strings.Split(cfg.DomainsCSV, ",") {
+			host := normalizeHost(entry)
+			if host != "" {
+				cfg.Domains = append(cfg.Domains, host)
+			}
+		}
 	}
 	return cfg
 }

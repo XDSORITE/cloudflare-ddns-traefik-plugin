@@ -12,6 +12,10 @@ testData:
   syncIntervalSeconds: 300
   requestTimeoutSeconds: 10
   autoDiscoverHost: true
+  routerRule: Host(`app.example.com`)
+  domains:
+    - api.example.com
+  domainsCsv: app2.example.com,app3.example.com
   defaultProxied: false
   ipSources:
     - https://api.ipify.org

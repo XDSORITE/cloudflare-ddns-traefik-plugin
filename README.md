@@ -8,20 +8,24 @@ Traefik middleware plugin that keeps Cloudflare **A** records in sync with your 
 - Worker compares current public IP to Cloudflare A records and updates only when needed.
 - Existing Cloudflare proxy mode (`proxied`) is preserved on updates.
 
-## 1. Enable plugin in Traefik static config
+## 1. Put plugin in a simple local path
+
+Place this repo root directly here:
+
+`<traefik-root>/plugins-local/src/ddns-traefik-plugin`
+
+No deep nested folders needed.
+
+## 2. Enable plugin in Traefik static config
 
 ```yaml
 experimental:
   localPlugins:
     ddns-traefik-plugin:
-      moduleName: github.com/xdsorite/ddns-traefik-plugin
+      moduleName: ddns-traefik-plugin
 ```
 
-Mount this repo to:
-
-`/plugins-local/src/github.com/xdsorite/ddns-traefik-plugin`
-
-## 2. Configure middleware in Traefik dynamic config
+## 3. Configure middleware in Traefik dynamic config
 
 All plugin configuration is in Traefik config (no external env/config files needed):
 
@@ -40,6 +44,7 @@ http:
           routerRule: "Host(`app.example.com`)"
           domains:
             - "api.example.com"
+          domainsCsv: "app2.example.com,app3.example.com"
           defaultProxied: false
           ipSources:
             - "https://api.ipify.org"
@@ -47,7 +52,7 @@ http:
             - "https://checkip.amazonaws.com"
 ```
 
-## 3. Attach middleware to router
+## 4. Attach middleware to router
 
 ```yaml
 http:
@@ -68,6 +73,7 @@ http:
 - `autoDiscoverHost`: extract hosts from `routerRule`.
 - `routerRule`: router rule string (for example `Host(\`app.example.com\`)`).
 - `domains`: explicit domains to manage.
+- `domainsCsv`: comma-separated manual domains.
 - `defaultProxied`: used only when creating new records.
 - `ipSources`: public IP endpoints in priority order.
 
