@@ -61,3 +61,16 @@ func TestServeHTTPTracksLiteralHost(t *testing.T) {
 		t.Fatalf("unexpected hosts snapshot: %+v", hosts)
 	}
 }
+
+func TestHasDesiredARecord(t *testing.T) {
+	records := []cfRecord{
+		{ID: "1", Name: "app.example.com", Type: "A", Content: "198.51.100.1"},
+		{ID: "2", Name: "app.example.com", Type: "A", Content: "203.0.113.10"},
+	}
+	if !hasDesiredARecord(records, "app.example.com", "203.0.113.10") {
+		t.Fatalf("expected desired record to be found")
+	}
+	if hasDesiredARecord(records, "app.example.com", "203.0.113.11") {
+		t.Fatalf("did not expect unmatched record")
+	}
+}

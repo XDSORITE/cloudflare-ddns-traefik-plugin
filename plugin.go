@@ -165,12 +165,14 @@ func (p *Middleware) syncOnce(ctx context.Context) {
 	if len(domains) == 0 {
 		return
 	}
+	p.logger.Printf("sync cycle started: domains=%d", len(domains))
 
 	publicIP, err := resolvePublicIPv4(ctx, p.cfg.IPSources, p.client.httpClient)
 	if err != nil {
 		p.logger.Printf("ip resolution failed: %v", err)
 		return
 	}
+	p.logger.Printf("resolved public IP: %s", publicIP)
 
 	zones, err := p.client.listZones(ctx)
 	if err != nil {
@@ -201,11 +203,12 @@ func (p *Middleware) syncDomain(ctx context.Context, zone *cfZone, domain, publi
 		return err
 	}
 
-	record := pickRecord(records)
-	if record.Content == publicIP {
+	if hasDesiredARecord(records, domain, publicIP) {
+		p.logger.Printf("record already in sync domain=%s ip=%s", domain, publicIP)
 		return nil
 	}
 
+	record := pickRecord(records)
 	p.logger.Printf("update domain=%s old=%s new=%s", domain, record.Content, publicIP)
 	_, err = p.client.updateARecord(ctx, zone.ID, record.ID, domain, publicIP, record.Proxied, record.Comment)
 	return err
@@ -244,17 +247,17 @@ func isLiteralHost(host string) bool {
 	return literalHostPattern.MatchString(host)
 }
 
-func mergeComment(existing, marker string) string {
-	existing = strings.TrimSpace(existing)
-	marker = strings.TrimSpace(marker)
-	if marker == "" {
-		return existing
+func hasDesiredARecord(records []cfRecord, domain, publicIP string) bool {
+	for _, record := range records {
+		if !strings.EqualFold(record.Name, domain) {
+			continue
+		}
+		if !strings.EqualFold(record.Type, "A") {
+			continue
+		}
+		if strings.TrimSpace(record.Content) == publicIP {
+			return true
+		}
 	}
-	if existing == "" {
-		return marker
-	}
-	if strings.Contains(existing, marker) {
-		return existing
-	}
-	return existing + " | " + marker
+	return false
 }
