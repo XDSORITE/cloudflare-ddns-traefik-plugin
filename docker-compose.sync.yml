@@ -1,5 +1,6 @@
 services:
   ddns-traefik-sync:
+    image: ghcr.io/xdsorite/cloudflare-ddns-traefik-plugin:latest
     build:
       context: .
       dockerfile: Dockerfile.sync
